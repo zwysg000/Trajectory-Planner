@@ -39,8 +39,8 @@ def _integrate_actions(
 ) -> DeltaAction:
     """将一串离散动作积分，得到从起点到终点的累计总位移和总偏航。
 
-    按世界坐标系计算：每步 forward 沿当前偏航方向投影，
-    left/right 改变偏航但不产生位移，up/down 改变高度。
+    起始状态为 (0, 0, 0) 位置，朝向 0°。
+    每步 forward 沿当前朝向投影，left/right 改变朝向，up/down 改变高度。
 
     Args:
         actions: 离散动作名称序列。
