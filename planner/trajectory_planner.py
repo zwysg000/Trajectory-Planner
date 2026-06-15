@@ -8,16 +8,16 @@
     2. **专家变异** — 以专家轨迹为模板，随机调整长度（插入/删除）并
        以一定概率替换每个动作。
 
-每条候选包含三个并列输出：
+每条候选包含三个输出：
 
     - ``actions`` — 离散动作名称序列（字符串）
-    - ``clean_deltas`` — 通过查询预定义映射表得到的无噪声 :class:`DeltaAction` 值
-    - ``noisy_deltas`` — 在 clean_deltas 的四个分量上分别添加可配置的独立
-      高斯噪声后的结果
+    - ``clean_delta`` — 执行完所有动作后相对于起点的累计总位移和总偏航（无噪声）
+    - ``noisy_delta`` — 在 clean_delta 上添加高斯噪声后的结果
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Sequence
 
@@ -31,28 +31,44 @@ from .types import ATOMIC_ACTIONS, DeltaAction, TrajectoryCandidate
 # ---------------------------------------------------------------------------
 
 
-def _action_to_delta_map(
+def _integrate_actions(
+    actions: Sequence[str],
     horizontal_step: float,
     vertical_step: float,
     yaw_step_deg: float,
-) -> dict[str, DeltaAction]:
-    """构建原子动作 → :class:`DeltaAction` 的映射表。
+) -> DeltaAction:
+    """将一串离散动作积分，得到从起点到终点的累计总位移和总偏航。
+
+    按世界坐标系计算：每步 forward 沿当前偏航方向投影，
+    left/right 改变偏航但不产生位移，up/down 改变高度。
 
     Args:
-        horizontal_step: forward 动作的前进步长（米）。
-        vertical_step: up/down 动作的垂直步长（米）。
-        yaw_step_deg: left/right 动作的偏航步长（度）。
+        actions: 离散动作名称序列。
+        horizontal_step: forward 步长（米）。
+        vertical_step: up/down 步长（米）。
+        yaw_step_deg: left/right 偏航步长（度）。
 
     Returns:
-        将 5 个原子动作名称映射到对应 :class:`DeltaAction` 的字典。
+        累计 DeltaAction，表示从起点到终点的总位移和总偏航。
     """
-    return {
-        "forward": DeltaAction(horizontal_step, 0.0, 0.0, 0.0),
-        "left": DeltaAction(0.0, 0.0, 0.0, yaw_step_deg),
-        "right": DeltaAction(0.0, 0.0, 0.0, -yaw_step_deg),
-        "up": DeltaAction(0.0, 0.0, vertical_step, 0.0),
-        "down": DeltaAction(0.0, 0.0, -vertical_step, 0.0),
-    }
+    x = y = z = 0.0
+    yaw_deg = 0.0
+
+    for action in actions:
+        if action == "forward":
+            yaw_rad = math.radians(yaw_deg)
+            x += horizontal_step * math.cos(yaw_rad)
+            y += horizontal_step * math.sin(yaw_rad)
+        elif action == "left":
+            yaw_deg += yaw_step_deg
+        elif action == "right":
+            yaw_deg -= yaw_step_deg
+        elif action == "up":
+            z += vertical_step
+        elif action == "down":
+            z -= vertical_step
+
+    return DeltaAction(dx=x, dy=y, dz=z, dphi=yaw_deg)
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +86,7 @@ class PlannerConfig:
 
         candidate_count = 5
         action_replacement_rate = 0.2
+        expert_derived_ratio = 0.5
         seed = None
         max_length = 200
 
@@ -79,7 +96,7 @@ class PlannerConfig:
         vertical_step   = 0.1    # 每次 ``up`` / ``down`` 升降的米数
         yaw_step_deg    = 15.0   # 每次 ``left`` / ``right`` 旋转的角度
 
-    **噪声参数** 控制加到四个增量分量上的独立高斯噪声。默认全为 0（无噪声）::
+    **噪声参数** 控制加到累计增量上的独立高斯噪声。默认全为 0（无噪声）::
 
         noise_sigma_dx   = 0.0   # 米
         noise_sigma_dy   = 0.0   # 米
@@ -148,6 +165,8 @@ class TrajectoryPlanner:
         4
         >>> candidates[0].actions
         ('right', 'up', 'forward', ...)
+        >>> candidates[0].clean_delta
+        DeltaAction(dx=0.26, dy=0.15, dz=0.0, dphi=30.0)
     """
 
     #: 规划器配置（构造后不可变）。
@@ -155,10 +174,9 @@ class TrajectoryPlanner:
 
     # -- 内部属性（在 __post_init__ 中初始化）--------------------------------
     _rng: np.random.Generator = field(init=False, repr=False)
-    _action_map: dict[str, DeltaAction] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """验证配置参数，初始化随机数生成器和动作映射表。"""
+        """验证配置参数，初始化随机数生成器。"""
         if self.config.candidate_count < 1:
             raise ValueError("candidate_count 必须 >= 1")
         if not (0.0 <= self.config.action_replacement_rate <= 1.0):
@@ -166,11 +184,6 @@ class TrajectoryPlanner:
         if not (0.0 <= self.config.expert_derived_ratio <= 1.0):
             raise ValueError("expert_derived_ratio 必须在 [0, 1] 范围内")
         self._rng = np.random.default_rng(self.config.seed)
-        self._action_map = _action_to_delta_map(
-            horizontal_step=self.config.horizontal_step,
-            vertical_step=self.config.vertical_step,
-            yaw_step_deg=self.config.yaw_step_deg,
-        )
 
     # ==============================
     #  公开 API
@@ -184,7 +197,10 @@ class TrajectoryPlanner:
 
         返回的列表包含 ``config.candidate_count`` 条候选。
         纯随机与专家变异两种策略的比例由 ``config.expert_derived_ratio`` 控制。
-        每条候选都携带三个并列输出（``actions``、``clean_deltas``、``noisy_deltas``）。
+        每条候选携带三个输出：
+            - ``actions`` — 离散动作名称序列
+            - ``clean_delta`` — 从起点到终点的累计总位移和总偏航（无噪声）
+            - ``noisy_delta`` — 在 clean_delta 上添加高斯噪声的结果
 
         Args:
             expert_actions:
@@ -205,7 +221,9 @@ class TrajectoryPlanner:
         expert_len = len(expert_actions)
         candidates: list[TrajectoryCandidate] = []
 
-        mutation_count = int(round(self.config.candidate_count * self.config.expert_derived_ratio))
+        mutation_count = int(
+            round(self.config.candidate_count * self.config.expert_derived_ratio)
+        )
         pure_random_count = self.config.candidate_count - mutation_count
 
         # 策略 1：纯随机
@@ -236,7 +254,7 @@ class TrajectoryPlanner:
         return candidates
 
     # ==============================
-    #  候选构建（动作 → 增量 → 加噪声）
+    #  候选构建（动作 → 积分 → 加噪声）
     # ==============================
 
     def _build_candidate(
@@ -246,9 +264,9 @@ class TrajectoryPlanner:
         source: str,
         extra_meta: dict | None = None,
     ) -> TrajectoryCandidate:
-        """从动作名称序列构建完整的 :class:`TrajectoryCandidate`。
+        """从离散动作序列构建完整的 :class:`TrajectoryCandidate`。
 
-        该方法依次执行动作→增量映射和根据配置添加高斯噪声。
+        该方法将动作序列积分得到累计总位移，再根据配置添加高斯噪声。
 
         Args:
             name: 候选名称/标识。
@@ -257,11 +275,17 @@ class TrajectoryPlanner:
             extra_meta: 额外的元数据键值对，会合并到 metadata 中。
 
         Returns:
-            已填充 ``clean_deltas`` 和 ``noisy_deltas`` 字段的
+            已填充 ``clean_delta`` 和 ``noisy_delta`` 字段的
             :class:`TrajectoryCandidate`。
         """
-        clean_deltas = tuple(self._action_map[a] for a in actions)
-        noisy_deltas = tuple(self._add_noise(d) for d in clean_deltas)
+        cfg = self.config
+        clean_delta = _integrate_actions(
+            actions,
+            horizontal_step=cfg.horizontal_step,
+            vertical_step=cfg.vertical_step,
+            yaw_step_deg=cfg.yaw_step_deg,
+        )
+        noisy_delta = self._add_noise(clean_delta)
 
         meta: dict = {"source": source}
         if extra_meta:
@@ -270,18 +294,18 @@ class TrajectoryPlanner:
         return TrajectoryCandidate(
             name=name,
             actions=actions,
-            clean_deltas=clean_deltas,
-            noisy_deltas=noisy_deltas,
+            clean_delta=clean_delta,
+            noisy_delta=noisy_delta,
             metadata=meta,
         )
 
     def _add_noise(self, delta: DeltaAction) -> DeltaAction:
-        """对 :class:`DeltaAction` 的四个分量分别添加独立高斯噪声。
+        """对累计 :class:`DeltaAction` 的四个分量分别添加独立高斯噪声。
 
         仅在对应的 ``noise_sigma_*`` 配置参数非零时才会添加噪声。
 
         Args:
-            delta: 待加噪声的干净 :class:`DeltaAction`。
+            delta: 待加噪声的干净累计 :class:`DeltaAction`。
 
         Returns:
             添加噪声后的新 :class:`DeltaAction`（若所有 sigma 为 0 则返回原值）。
@@ -364,18 +388,15 @@ class TrajectoryPlanner:
         """
         actions = list(expert_actions)
 
-        # 若过长则随机删除
         while len(actions) > target_length:
             del_idx = int(self._rng.integers(0, len(actions)))
             del actions[del_idx]
 
-        # 若过短则随机插入
         while len(actions) < target_length:
             ins_idx = int(self._rng.integers(0, len(actions) + 1))
             new_action = ATOMIC_ACTIONS[int(self._rng.integers(0, len(ATOMIC_ACTIONS)))]
             actions.insert(ins_idx, new_action)
 
-        # 按概率替换
         for i in range(len(actions)):
             if self._rng.random() < self.config.action_replacement_rate:
                 actions[i] = ATOMIC_ACTIONS[
