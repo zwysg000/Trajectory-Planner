@@ -14,14 +14,13 @@ ATOMIC_ACTIONS: tuple[str, ...] = ("forward", "left", "right", "up", "down")
 
 由离散原子动作积分得到的**累计**连续增量（单值，不是序列）。
 
-表示从起始状态到执行完一系列动作之后的总位移和总偏航。
-坐标采用世界坐标系（即相对于起点的绝对位移）。
+表示从起始状态执行完一系列动作之后的总位移和总偏航。
 
 ```python
 @dataclass(frozen=True)
 class DeltaAction:
-    dx: float     # 米 — 世界坐标系 X 方向总位移
-    dy: float     # 米 — 世界坐标系 Y 方向总位移
+    dx: float     # 米 — 总 X 方向位移
+    dy: float     # 米 — 总 Y 方向位移
     dz: float     # 米 — 总垂直位移
     dphi: float   # 度 — 总偏航变化（正数 = 左转）
 ```

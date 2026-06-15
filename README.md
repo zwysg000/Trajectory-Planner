@@ -24,19 +24,36 @@
 
 **输入** 一条专家轨迹（最优路径的动作序列）。
 
-**输出** K 条候选轨迹，每条候选包含：
+**输出** K 条候选轨迹，每条候选输出**三样东西**：
 
-|     输出      |       类型        | 含义                                                     |
-| :-----------: | :---------------: | :------------------------------------------------------- |
-|   `actions`   | `tuple[str, ...]` | 离散动作名称序列                                         |
-| `clean_delta` |   `DeltaAction`   | **单值**，执行完所有动作后相对于起点的累计总位移和总偏航 |
-| `noisy_delta` |   `DeltaAction`   | 在 clean_delta 上叠加高斯噪声后的结果                    |
+|     输出      | 含义                                                                                   |
+| :-----------: | :------------------------------------------------------------------------------------- |
+|   `actions`   | 一串动作名，例如 `["left", "forward", "up"]`                                           |
+| `clean_delta` | 执行完所有动作后，从起点到终点的**总位移和总偏航**，以 `[dx, dy, dz, dphi]` 四个数表示 |
+| `noisy_delta` | 在 clean_delta 上加了一点随机噪声的结果，模拟真实传感器误差                            |
 
-`clean_delta` 和 `noisy_delta` 均为**单值**（不是每步一个），表示从起点到终点的积分结果。
+`[dx, dy, dz, dphi]` 的参数设计与论文 `3.3 第二部分` 给出的 ANWM 输入格式对齐。
 
-累计位移按**世界坐标系**计算——先左转再前进会产生 X 和 Y 两个方向的分量。
+- 默认无人机的初始状态是 **(0, 0, 0)** 位置，朝向 **(0°)**
+- 每执行一步 `forward`，就沿着当前朝向走 0.1 米
+- 每执行一步 `left`，朝向向左转 15°
+- 每执行一步 `right`，朝向向右转 15°
+- 每执行一步 `up`，高度上升 0.1 米
+- 每执行一步 `down`，高度下降 0.1 米
 
-`[dx, dy, dz, dphi]` 的格式与论文 `3.3 第二部分` 给出的 ANWM 输入格式对齐。
+全部执行完后，`[dx, dy, dz, dphi]` 就是无人机相对于起点的位置和朝向。
+
+例如轨迹 `["left", "left", "forward", "forward", "forward"]`：
+
+```
+起点位置 (0, 0, 0)，朝向 0°
+  left  → 朝向 15°
+  left  → 朝向 30°
+  forward → 沿 30° 方向走 0.1m → 位置 (0.087, 0.050, 0)
+  forward → 沿 30° 方向再走 0.1m → 位置 (0.173, 0.100, 0)
+  forward → 沿 30° 方向再走 0.1m → 位置 (0.260, 0.150, 0)
+最终: 位置 (0.26, 0.15, 0)，朝向 30°
+```
 
 **clean_delta 与 noisy_delta 的关系：**
 
@@ -110,15 +127,23 @@ for c in candidates:
 #   clean_delta: [0.0, 0.0, 0.1, -30.0]
 #   noisy_delta: [0.005, -0.004, 0.096, -29.94]
 # random_trajectory_2 14 步
-#   actions: ['up', 'right', 'forward', 'down', 'right', 'right', ...]
+#   actions: ['up', 'right', 'forward', 'down', 'right', 'right', 'left', ...]
 #   clean_delta: [0.183, -0.076, 0.0, -60.0]
 #   noisy_delta: [0.179, -0.075, -0.003, -59.56]
+# random_trajectory_3 10 步
+#   actions: ['left', 'up', 'forward', 'up', 'up', 'left', 'forward', ...]
+#   clean_delta: [0.183, 0.076, 0.1, 15.0]
+#   noisy_delta: [0.181, 0.075, 0.102, 15.18]
 # mutated_trajectory_1 12 步
-#   actions: ['left', 'up', 'left', 'down', 'up', 'forward', ...]
+#   actions: ['left', 'up', 'left', 'down', 'up', 'forward', 'forward', ...]
 #   clean_delta: [0.244, 0.171, 0.1, 30.0]
 #   noisy_delta: [0.245, 0.171, 0.101, 30.44]
 # mutated_trajectory_2 11 步
-#   actions: ['up', 'left', 'forward', 'forward', 'forward', ...]
+#   actions: ['up', 'left', 'forward', 'forward', 'forward', 'forward', ...]
 #   clean_delta: [0.483, 0.078, 0.3, -15.0]
 #   noisy_delta: [0.484, 0.079, 0.302, -14.6]
+# mutated_trajectory_3 14 步
+#   actions: ['left', 'down', 'forward', 'right', 'right', 'forward', ...]
+#   clean_delta: [0.68, -0.052, 0.0, 15.0]
+#   noisy_delta: [0.68, -0.051, 0.001, 15.33]
 ```
