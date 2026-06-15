@@ -1,10 +1,8 @@
 # Trajectory Planner — 启发式候选轨迹规划器
 
-ANWM论文第 8.1 节启发式规划器的实现。
+[ANWM](https://arxiv.org/abs/2512.21887)论文第 8.1 节启发式规划器的实现。
 
 给定一条专家轨迹（最优路径），派生多条候选轨迹，用于训练世界模型从多个候选路径中选择最优路径。
-
----
 
 ## 轨迹构成
 
@@ -21,8 +19,7 @@ ANWM论文第 8.1 节启发式规划器的实现。
 > 步长均为默认值，可在配置中修改。
 
 例如，轨迹 `("left", "left", "forward", "forward", "forward")` 表示：先左转 30°，再向前飞 30cm。
-
----
+该字段设计遵循原论文中 `Table 4`
 
 ## 规划器功能
 
@@ -36,13 +33,13 @@ ANWM论文第 8.1 节启发式规划器的实现。
 | `clean_deltas` | `tuple[DeltaAction, ...]` | 无噪声的连续增量 `[dx, dy, dz, dphi]`      |
 | `noisy_deltas` | `tuple[DeltaAction, ...]` | 在 clean_deltas 上叠加高斯噪声后的连续增量 |
 
+clean_deltas 与 noisy_deltas 的格式与论文 `3.3 第二部分` 给出的ANWM的输入格式对齐
+
 **clean_deltas 与 noisy_deltas 的关系：**
 
 世界模型训练需要从"感知输入"中推理路径。用 clean 值训练过于理想化，因此通过叠加高斯噪声模拟真实世界中传感器的不确定性，使模型学会在噪声中做决策。
 
 如果不需要噪声，将 `noise_sigma_*` 全部置为 0 即可。
-
----
 
 ## 候选生成策略
 
@@ -51,8 +48,6 @@ ANWM论文第 8.1 节启发式规划器的实现。
 **策略一：纯随机。** 长度随机，每步从 5 个动作中均匀采样。
 
 **策略二：专家变异。** 以专家轨迹为模板，调整到随机长度后再按 `action_replacement_rate` 的概率替换每个动作。变异率控制候选与专家的偏离程度：0 为完全保留，1 为完全随机。
-
----
 
 ## 配置参数
 
@@ -69,8 +64,6 @@ ANWM论文第 8.1 节启发式规划器的实现。
 | `noise_sigma_dy`          | `0.0`  | dy 噪声标准差（米）                                |
 | `noise_sigma_dz`          | `0.0`  | dz 噪声标准差（米）                                |
 | `noise_sigma_dphi`        | `0.0`  | dphi 噪声标准差（度）                              |
-
----
 
 ## 用法
 
@@ -106,8 +99,6 @@ for c in candidates:
     print("  clean_deltas:", [d.as_list() for d in c.clean_deltas])
     print("  noisy_deltas:", [d.as_list() for d in c.noisy_deltas])
 ```
-
----
 
 ## 项目文件
 

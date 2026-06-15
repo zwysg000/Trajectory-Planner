@@ -8,8 +8,6 @@ ATOMIC_ACTIONS: tuple[str, ...] = ("forward", "left", "right", "up", "down")
 
 5 个合法原子动作的元组。
 
----
-
 ## `class DeltaAction`
 
 一个连续 delta 动作，由离散原子动作转换而来。
@@ -29,8 +27,6 @@ class DeltaAction:
 | ----------- | ------------- | ------------------------------ |
 | `as_list()` | `list[float]` | 转为 `[dx, dy, dz, dphi]` 列表 |
 
----
-
 ## `class PlannerConfig`
 
 | 参数                      | 类型          | 默认值 | 说明                                    |
@@ -47,8 +43,6 @@ class DeltaAction:
 | `noise_sigma_dy`          | `float`       | `0.0`  | dy 噪声标准差（米）                     |
 | `noise_sigma_dz`          | `float`       | `0.0`  | dz 噪声标准差（米）                     |
 | `noise_sigma_dphi`        | `float`       | `0.0`  | dphi 噪声标准差（度）                   |
-
----
 
 ## `class TrajectoryPlanner`
 
@@ -68,8 +62,6 @@ class TrajectoryPlanner:
 纯随机和专家变异两种策略的比例由 `expert_derived_ratio` 控制。
 
 **异常：** `ValueError` — `expert_actions` 为空或包含非法动作名。
-
----
 
 ## `class TrajectoryCandidate`
 
@@ -92,8 +84,6 @@ class TrajectoryCandidate:
 | `as_list()` | `list[str]` | 动作序列转为列表                                |
 | `to_dict()` | `dict`      | 转为字典（含 `clean_deltas` 和 `noisy_deltas`） |
 | `__len__()` | `int`       | 轨迹步数                                        |
-
----
 
 ## 离散动作 → DeltaAction 映射
 
